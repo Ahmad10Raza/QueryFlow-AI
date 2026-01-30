@@ -5,7 +5,7 @@ from app.db.base_class import Base
 
 class QueryHistory(Base):
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
+    user_id = Column(Integer, nullable=False)  # References MongoDB user (no FK constraint)
     connection_id = Column(Integer, ForeignKey("db_connection.id"), nullable=False)
     
     # Input
@@ -27,5 +27,4 @@ class QueryHistory(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Relationships
-    user = relationship("User", back_populates="query_history")
     connection = relationship("DBConnection", back_populates="query_history")

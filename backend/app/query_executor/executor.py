@@ -45,3 +45,102 @@ def execute_sql_query(db_connection: DBConnection, sql: str, require_commit: boo
         raise e
     finally:
         engine.dispose()
+
+
+def execute_mongo_query(db_connection: DBConnection, query: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Executes a MongoDB query on the target database.
+    
+    Expected query format:
+    {
+        "collection": "collection_name",
+        "operation": "find" | "aggregate",
+        "filter": {...},  # For find operations
+        "pipeline": [...]  # For aggregate operations
+        "limit": 100  # Optional
+    }
+    """
+    from app.services.mongo_client import mongo_client
+    from bson import ObjectId
+    from datetime import datetime
+    
+    def serialize_mongo_doc(doc):
+        """Recursively converts BSON types to JSON-serializable types."""
+        if isinstance(doc, dict):
+            return {key: serialize_mongo_doc(value) for key, value in doc.items()}
+        elif isinstance(doc, list):
+            return [serialize_mongo_doc(item) for item in doc]
+        elif isinstance(doc, ObjectId):
+            return str(doc)
+        elif isinstance(doc, datetime):
+            return doc.isoformat()
+        elif isinstance(doc, bytes):
+            return doc.decode('utf-8', errors='replace')
+        else:
+            return doc
+    
+    decrypted_password = encryptor.decrypt(db_connection.password_encrypted)
+    
+    connection_details = {
+        "username": db_connection.username,
+        "host": db_connection.host,
+        "port": db_connection.port,
+        "database_name": db_connection.database_name
+    }
+    
+    client = mongo_client.get_client(connection_details, decrypted_password)
+    
+    try:
+        db = client[db_connection.database_name]
+        collection_name = query.get("collection")
+        operation = query.get("operation", "find")
+        limit = query.get("limit", 100)
+        
+        if not collection_name:
+            raise ValueError("Missing 'collection' in query")
+        
+        collection = db[collection_name]
+        
+        if operation == "find":
+            filter_dict = query.get("filter", {})
+            cursor = collection.find(filter_dict).limit(limit)
+            rows = []
+            for doc in cursor:
+                # Convert all BSON types to JSON-serializable
+                rows.append(serialize_mongo_doc(doc))
+            
+            # Infer columns from results
+            if rows:
+                columns = list(rows[0].keys())
+            else:
+                columns = []
+            
+            return {
+                "columns": columns,
+                "rows": rows
+            }
+        
+        elif operation == "aggregate":
+            pipeline = query.get("pipeline", [])
+            cursor = collection.aggregate(pipeline)
+            rows = []
+            for doc in cursor:
+                # Convert all BSON types to JSON-serializable
+                rows.append(serialize_mongo_doc(doc))
+            
+            if rows:
+                columns = list(rows[0].keys())
+            else:
+                columns = []
+            
+            return {
+                "columns": columns,
+                "rows": rows
+            }
+        
+        else:
+            raise ValueError(f"Unsupported MongoDB operation: {operation}")
+    
+    finally:
+        client.close()
+

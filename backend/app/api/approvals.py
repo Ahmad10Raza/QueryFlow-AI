@@ -54,7 +54,7 @@ def list_my_approval_requests(
 ):
     """List current user's approval requests"""
     approvals = db.query(QueryApproval).filter(
-        QueryApproval.requested_by_user_id == current_user.id
+        QueryApproval.requested_by_user_id == current_user.user_id
     ).order_by(desc(QueryApproval.created_at)).all()
     
     return approvals
@@ -71,7 +71,7 @@ def get_approval_details(
         raise HTTPException(status_code=404, detail="Approval not found")
     
     # Check permissions: owner or admin
-    if approval.requested_by_user_id != current_user.id and not current_user.is_superuser:
+    if approval.requested_by_user_id != current_user.user_id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     return approval
@@ -95,7 +95,7 @@ def approve_request(
         raise HTTPException(status_code=400, detail="Approval already processed")
     
     approval.status = ApprovalStatus.APPROVED
-    approval.reviewed_by_user_id = current_user.id
+    approval.reviewed_by_user_id = current_user.user_id
     approval.reviewed_at = datetime.utcnow()
     approval.reviewer_comment = action.comment
     
@@ -123,7 +123,7 @@ def reject_request(
         raise HTTPException(status_code=400, detail="Approval already processed")
     
     approval.status = ApprovalStatus.REJECTED
-    approval.reviewed_by_user_id = current_user.id
+    approval.reviewed_by_user_id = current_user.user_id
     approval.reviewed_at = datetime.utcnow()
     approval.reviewer_comment = action.comment
     

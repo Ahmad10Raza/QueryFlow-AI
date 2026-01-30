@@ -25,7 +25,7 @@ export default function ApprovalRequestDialog({
 }: ApprovalRequestDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onClose}>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-lg">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <AlertTriangle className="h-5 w-5 text-yellow-600" />
@@ -39,9 +39,11 @@ export default function ApprovalRequestDialog({
                 <div className="space-y-4">
                     <div>
                         <h4 className="text-sm font-semibold mb-2">Generated SQL:</h4>
-                        <pre className="bg-zinc-900 text-zinc-100 p-3 rounded-md text-sm overflow-x-auto">
-                            {sqlQuery}
-                        </pre>
+                        <div className="bg-zinc-900 text-zinc-100 p-3 rounded-md relative group">
+                            <pre className="text-sm whitespace-pre-wrap break-all font-mono max-h-[200px] overflow-y-auto">
+                                {sqlQuery}
+                            </pre>
+                        </div>
                     </div>
 
                     {impact && (

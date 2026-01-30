@@ -51,9 +51,31 @@ export default function EditorPage() {
     // Sidebar Tab state
     const [sidebarTab, setSidebarTab] = useState<'schema' | 'history'>('schema');
 
+    // Approved Request Execution State
+    const [approvedRequestId, setApprovedRequestId] = useState<number | null>(null);
+
     useEffect(() => {
         if (dbId) setActiveDbId(parseInt(dbId));
     }, [dbId, setActiveDbId]);
+
+    useEffect(() => {
+        const requestId = searchParams.get('requestId');
+        if (requestId) {
+            const id = parseInt(requestId);
+            setApprovedRequestId(id);
+            // Fetch request details
+            api.get('/query-requests/')
+                .then((res) => {
+                    const req = res.data.find((r: any) => r.id === id);
+                    if (req) {
+                        setCurrentSql(req.generated_sql);
+                        if (req.connection_id) setActiveDbId(req.connection_id);
+                        addMessage('assistant', `✅ **Loaded Approved Request #${id}**\n\nReady to execute. Click the "Run" button to proceed.`);
+                    }
+                })
+                .catch(err => console.error("Failed to load request:", err));
+        }
+    }, [searchParams, setActiveDbId, setCurrentSql, addMessage]);
 
     const handleRunAI = async (text: string) => {
         if (!dbId) return alert("No database selected");
@@ -78,7 +100,7 @@ export default function EditorPage() {
                 setResult({ columns: [], rows: [], error: data.error });
                 addMessage('assistant', `⚠️ Error: ${data.error}`);
             } else if (data.access_status === 'NEEDS_APPROVAL' && data.approval_id) {
-                console.log("Handling approval case");
+                console.log("Handling approval case (legacy)");
                 // Show approval dialog
                 setApprovalData({
                     approvalId: data.approval_id,
@@ -87,6 +109,13 @@ export default function EditorPage() {
                 });
                 setApprovalDialogOpen(true);
                 addMessage('assistant', `⚠️ This query requires admin approval. Approval request #${data.approval_id} has been created.`);
+            } else if (data.access_status === 'PENDING_APPROVAL' && data.approval_id) {
+                console.log("Handling RBAC approval case");
+                // Show the generated query and inform user
+                if (data.sql_query) {
+                    setCurrentSql(data.sql_query);
+                }
+                addMessage('assistant', `🔒 **Approval Required**\n\nThis ${data.intent || 'query'} operation requires admin approval.\n\n**Generated Query:**\n\`\`\`sql\n${data.sql_query}\n\`\`\`\n\n✅ Request #${data.approval_id} has been created. Check "My Requests" to track its status.`);
             } else if (data.is_ambiguous) {
                 console.log("Handling ambiguity case");
                 setAmbiguityOptions(data.disambiguation_options || []);
@@ -126,7 +155,7 @@ export default function EditorPage() {
     };
 
     const handleRunSql = async () => {
-        if (!dbId) return alert("No database selected");
+        if (!activeDbId) return alert("No database selected");
         if (!currentSql) return alert("No SQL query to run");
 
         setExecuting(true);
@@ -134,21 +163,47 @@ export default function EditorPage() {
         setResult(null);
 
         try {
-            const res = await api.post('/query/run', {
-                connection_id: parseInt(dbId),
-                sql_query: currentSql
-            });
-            const data: AIQueryResponse = res.data;
+            let res;
+
+            if (approvedRequestId) {
+                // Execute Approved Request
+                res = await api.post(`/query-requests/${approvedRequestId}/execute`);
+
+                // If successful, maybe clear approvedRequestId so subsequent runs are normal (or not?)
+                // Actually, once executed, status becomes EXECUTED, so repeating might fail if backend restricts.
+                // For now, let's keep it.
+            } else {
+                // Normal Execution
+                res = await api.post('/query/run', {
+                    connection_id: activeDbId,
+                    sql_query: currentSql
+                });
+            }
+
+            const data = res.data;
 
             if (data.error) {
                 setResult({ columns: [], rows: [], error: data.error });
             } else if (data.result) {
                 setResult(data.result);
-                addMessage('assistant', "Query executed successfully.");
+                addMessage('assistant', approvedRequestId
+                    ? `✅ Approved request #${approvedRequestId} executed successfully.`
+                    : "Query executed successfully.");
+
+                // If it was an approved request, we might want to refresh the state or redirect?
+                // For now just stay here.
+                if (approvedRequestId) {
+                    setApprovedRequestId(null); // Clear it so next run is normal (if they edit user query)
+                    // But wait, if they didn't edit, running again as normal user might fail if it's DELETE.
+                    // That's fine, normal checks apply.
+                }
             }
 
         } catch (err: any) {
-            setResult({ columns: [], rows: [], error: err.message || "Unknown error occurred" });
+            console.error("Execution error:", err);
+            const errorMsg = err.response?.data?.detail || err.message || "Unknown error occurred";
+            setResult({ columns: [], rows: [], error: errorMsg });
+            addMessage('assistant', `❌ Execution Failed: ${errorMsg}`);
         } finally {
             setExecuting(false);
         }
@@ -292,7 +347,7 @@ export default function EditorPage() {
                                 {sidebarTab === 'schema' ? (
                                     <SchemaExplorer connectionId={dbId ? parseInt(dbId) : null} />
                                 ) : (
-                                    <QueryHistoryPanel />
+                                    <QueryHistoryPanel onReplay={handleRunAI} />
                                 )}
                             </div>
                         </ResizablePanel>
@@ -372,7 +427,7 @@ export default function EditorPage() {
                                     minSize="200px"
                                     className="bg-white flex flex-col"
                                 >
-                                    <div className="px-4 py-2 border-b font-semibold text-sm bg-zinc-50 flex justify-between items-center h-[53px]">
+                                    <div className="px-4 py-2 border-b font-semibold text-sm bg-zinc-50 flex justify-between items-center h-[53px] relative z-0">
                                         <span>Results</span>
                                         <div className="flex gap-1">
                                             <Button

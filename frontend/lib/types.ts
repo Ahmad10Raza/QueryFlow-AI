@@ -17,7 +17,7 @@ export interface AIQueryResponse {
         cols_modified?: string[];
     };
     explanation?: string;
-    access_status?: 'APPROVED' | 'REJECTED' | 'NEEDS_APPROVAL' | 'PENDING';
+    access_status?: 'APPROVED' | 'REJECTED' | 'NEEDS_APPROVAL' | 'PENDING' | 'PENDING_APPROVAL';
     access_message?: string;
     validation_error?: string;
     approval_id?: number;

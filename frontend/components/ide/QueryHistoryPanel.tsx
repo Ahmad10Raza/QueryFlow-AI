@@ -19,7 +19,11 @@ interface HistoryItem {
     insights: any;
 }
 
-export function QueryHistoryPanel() {
+interface QueryHistoryPanelProps {
+    onReplay?: (question: string) => void;
+}
+
+export function QueryHistoryPanel({ onReplay }: QueryHistoryPanelProps) {
     const [history, setHistory] = useState<HistoryItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -49,7 +53,6 @@ export function QueryHistoryPanel() {
 
         // 2. Add as a message to chat for context
         addMessage("user", item.question);
-        addMessage("assistant", "Replaying query from history...");
 
         // 3. Populate insights/plan if they exist
         if (item.insights) {
@@ -59,6 +62,14 @@ export function QueryHistoryPanel() {
                 insights: item.insights,
                 explanation: "Loaded from history"
             } as any);
+        }
+
+        // 4. Actually re-run the query if callback is provided
+        if (onReplay) {
+            addMessage("assistant", "Replaying query from history...");
+            onReplay(item.question);
+        } else {
+            addMessage("assistant", "Query loaded from history. Press Execute to run it.");
         }
     };
 

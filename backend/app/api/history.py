@@ -38,7 +38,7 @@ def list_query_history(
     """
     history = (
         db.query(QueryHistory)
-        .filter(QueryHistory.user_id == current_user.id)
+        .filter(QueryHistory.user_id == current_user.user_id)
         .order_by(QueryHistory.created_at.desc())
         .offset(skip)
         .limit(limit)
@@ -77,7 +77,7 @@ def get_query_history_item(
     if not item:
         raise HTTPException(status_code=404, detail="History item not found")
         
-    if item.user_id != current_user.id and not current_user.is_superuser:
+    if item.user_id != current_user.user_id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized")
         
     conn_name = item.connection.name if item.connection else "Unknown"

@@ -8,11 +8,53 @@ def inspect_schema(db_connection: DBConnection):
     Connects to the target database and extracts schema information.
     Uses information_schema for PostgreSQL to avoid permission issues with system catalogs.
     """
-    # Construct connection string
+    # Decrypt password
     decrypted_password = encryptor.decrypt(db_connection.password_encrypted)
-    engine = db_connector.create_engine_for_connection(db_connection, decrypted_password)
     
     schema_info = {}
+    
+    # Handle MongoDB separately (no SQLAlchemy engine needed)
+    if db_connection.db_type == 'mongodb':
+        from app.services.mongo_client import mongo_client
+        
+        client = mongo_client.get_client(
+            {
+                "username": db_connection.username,
+                "host": db_connection.host,
+                "port": db_connection.port,
+                "database_name": db_connection.database_name
+            },
+            decrypted_password
+        )
+        
+        try:
+            collections = mongo_client.list_collections(client, db_connection.database_name)
+            
+            for collection_name in collections:
+                try:
+                    print(f"DEBUG: Inspecting MongoDB collection {collection_name}")
+                    documents = mongo_client.sample_documents(
+                        client, db_connection.database_name, collection_name, limit=20
+                    )
+                    columns = mongo_client.infer_schema_from_documents(documents)
+                    
+                    schema_info[collection_name] = {
+                        "columns": columns,
+                        "foreign_keys": []  # MongoDB doesn't have formal FK constraints
+                    }
+                except Exception as e:
+                    print(f"Warning: Could not inspect collection {collection_name}: {e}")
+                    schema_info[collection_name] = {
+                        "columns": [],
+                        "foreign_keys": []
+                    }
+        finally:
+            client.close()
+        
+        return schema_info
+    
+    # Create SQLAlchemy engine for SQL databases only
+    engine = db_connector.create_engine_for_connection(db_connection, decrypted_password)
     
     if db_connection.db_type in ('postgresql', 'postgres'):
         # Use information_schema for PostgreSQL (works with read-only users)

@@ -5,15 +5,16 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { cn } from '@/lib/utils';
-import { Users, Activity, BarChart3, ShieldAlert } from 'lucide-react';
+import { Users, Activity, BarChart3, ShieldAlert, ClipboardList } from 'lucide-react';
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
     const pathname = usePathname();
 
     const navItems = [
+        { name: 'System Overview', href: '/admin', icon: BarChart3 },
+        { name: 'Pending Requests', href: '/admin/requests', icon: ClipboardList },
         { name: 'User Management', href: '/admin/users', icon: Users },
         { name: 'Audit Logs', href: '/admin/audit', icon: Activity },
-        { name: 'System Overview', href: '/admin', icon: BarChart3 },
     ];
 
     return (

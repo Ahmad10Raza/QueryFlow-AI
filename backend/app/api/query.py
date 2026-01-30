@@ -5,11 +5,117 @@ from app.models.db_connection import DBConnection
 from app.auth import dependencies
 from app.models.user import User
 from app.ai.graph import app as workflow_app
-from app.query_executor.executor import execute_sql_query
+from app.query_executor.executor import execute_sql_query, execute_mongo_query
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+import re
 
 router = APIRouter()
+
+
+def execute_query_for_connection(conn: DBConnection, sql_or_query: str) -> Dict[str, Any]:
+    """
+    Routes query execution to the appropriate executor based on database type.
+    For MongoDB, converts simple SQL patterns to MongoDB queries.
+    """
+    if conn.db_type == "mongodb":
+        # Parse SQL-like query to MongoDB format
+        mongo_query = sql_to_mongo_query(sql_or_query)
+        return execute_mongo_query(conn, mongo_query)
+    else:
+        return execute_sql_query(conn, sql_or_query)
+
+
+def sql_to_mongo_query(sql: str) -> Dict[str, Any]:
+    """
+    Converts simple SQL-like queries to MongoDB query format.
+    Supports basic SELECT, WHERE clauses.
+    """
+    sql = sql.strip().rstrip(';')
+    
+    # Pattern: SELECT * FROM collection_name [WHERE conditions] [LIMIT n]
+    select_pattern = r"SELECT\s+(.+?)\s+FROM\s+[`'\"]?(\w+)[`'\"]?(?:\s+WHERE\s+(.+?))?(?:\s+LIMIT\s+(\d+))?$"
+    match = re.match(select_pattern, sql, re.IGNORECASE)
+    
+    if match:
+        fields = match.group(1).strip()
+        collection = match.group(2)
+        where_clause = match.group(3)
+        limit = int(match.group(4)) if match.group(4) else 100
+        
+        # Build MongoDB query
+        mongo_filter = {}
+        if where_clause:
+            mongo_filter = parse_where_to_mongo(where_clause)
+        
+        return {
+            "collection": collection,
+            "operation": "find",
+            "filter": mongo_filter,
+            "limit": limit
+        }
+    
+    # Fallback: treat as collection name with find all
+    return {
+        "collection": sql.replace("SELECT * FROM ", "").strip().strip('`"\''),
+        "operation": "find",
+        "filter": {},
+        "limit": 100
+    }
+
+
+def parse_where_to_mongo(where_clause: str) -> Dict[str, Any]:
+    """
+    Parses simple WHERE clauses to MongoDB filter format.
+    Supports: field = value, field > value, field < value, AND
+    """
+    mongo_filter = {}
+    
+    # Split by AND
+    conditions = re.split(r'\s+AND\s+', where_clause, flags=re.IGNORECASE)
+    
+    for condition in conditions:
+        condition = condition.strip()
+        
+        # Match: field = 'value' or field = value
+        eq_match = re.match(r"[`'\"]?(\w+)[`'\"]?\s*=\s*['\"]?([^'\"]+)['\"]?", condition)
+        if eq_match:
+            field, value = eq_match.groups()
+            # Try to convert to number if possible
+            try:
+                value = int(value)
+            except ValueError:
+                try:
+                    value = float(value)
+                except ValueError:
+                    pass  # Keep as string
+            mongo_filter[field] = value
+            continue
+        
+        # Match: field > value
+        gt_match = re.match(r"[`'\"]?(\w+)[`'\"]?\s*>\s*['\"]?([^'\"]+)['\"]?", condition)
+        if gt_match:
+            field, value = gt_match.groups()
+            try:
+                value = float(value)
+            except ValueError:
+                pass
+            mongo_filter[field] = {"$gt": value}
+            continue
+        
+        # Match: field < value
+        lt_match = re.match(r"[`'\"]?(\w+)[`'\"]?\s*<\s*['\"]?([^'\"]+)['\"]?", condition)
+        if lt_match:
+            field, value = lt_match.groups()
+            try:
+                value = float(value)
+            except ValueError:
+                pass
+            mongo_filter[field] = {"$lt": value}
+            continue
+    
+    return mongo_filter
+
 
 class NLQueryRequest(BaseModel):
     connection_id: int
@@ -105,33 +211,65 @@ async def run_natural_language_query(
             # To avoid huge diff, we will trust the existing logic is here or we re-insert it if needed. 
             # Actually, replace_file_content replaces the whole block. I need to be careful.
             # Re-inserting Approval Logic:
-            from app.models.approval import QueryApproval
-            import json
+            # Use QueryRequest for AI-triggered approvals
+            from app.models.query_request import QueryRequest
             
-            approval = QueryApproval(
-                requested_by_user_id=current_user.user_id,
-                db_connection_id=conn.id,
-                prompt_text=request.question,
-                generated_sql=final_state.get("sql_query"),
-                impact_summary=json.dumps(final_state.get("impact", {})),
-                risk_level=final_state.get("impact", {}).get("risk_score", "MEDIUM").upper()
+            # Determine intent if not set
+            intent = final_state.get("intent", "READ").upper()
+            
+            query_request = QueryRequest(
+                user_id=current_user.user_id,
+                connection_id=conn.id,
+                question=request.question,
+                generated_sql=final_state.get("sql_query", ""),
+                intent=intent,
+                status="PENDING"
             )
-            db.add(approval)
+            db.add(query_request)
             db.commit()
-            db.refresh(approval)
+            db.refresh(query_request)
             
             return NLQueryResponse(
-                intent=final_state["intent"],
+                intent=intent,
                 sql_query=final_state.get("sql_query"),
                 result=None,
                 error=None,
-                approval_id=approval.id,
-                access_status="NEEDS_APPROVAL"
+                approval_id=query_request.id,
+                access_status="PENDING_APPROVAL"
             )
         
         # If we have a valid SQL, Validate -> Normalize -> Execute
         if final_state.get("sql_query"):
             current_sql = final_state["sql_query"]
+            intent = final_state.get("intent", "READ").upper()
+            
+            # RBAC Permission Check
+            from app.rbac.permissions import can_execute_directly
+            
+            if not can_execute_directly(current_user, intent):
+                # User cannot execute directly - create QueryRequest
+                from app.models.query_request import QueryRequest
+                
+                query_request = QueryRequest(
+                    user_id=current_user.user_id,
+                    connection_id=conn.id,
+                    question=request.question,
+                    generated_sql=current_sql,
+                    intent=intent,
+                    status="PENDING"
+                )
+                db.add(query_request)
+                db.commit()
+                db.refresh(query_request)
+                
+                return NLQueryResponse(
+                    intent=intent,
+                    sql_query=current_sql,
+                    result=None,
+                    error=None,
+                    approval_id=query_request.id,
+                    access_status="PENDING_APPROVAL"
+                )
             
             # STEP 1: Validate & Normalize
             validation_result = validate_and_normalize_sql(current_sql, dialect="mysql")
@@ -142,14 +280,19 @@ async def run_natural_language_query(
                 print(f"WARN: SQL Validation failed: {validation_result['error']}. Proceeding with caution.")
             
             try:
-                execution_result = execute_sql_query(conn, current_sql)
+                execution_result = execute_query_for_connection(conn, current_sql)
                 
                 # Phase 5: Generate Insights (Success path)
                 from app.ai.nodes.insights import query_insights_generator
                 
                 # Calculate metadata
-                row_count = len(execution_result.get("data", [])) if execution_result else 0
+                rows = execution_result.get("rows", execution_result.get("data", []))
+                row_count = len(rows) if rows else 0
                 cols = execution_result.get("columns", []) if execution_result else []
+                
+                # Get sample data (first 5 rows) for meaningful insights
+                sample_data = rows[:5] if rows else []
+                
                 metadata = {
                     "rows_returned": row_count,
                     "columns": cols,
@@ -160,6 +303,7 @@ async def run_natural_language_query(
                     "question": request.question,
                     "sql_query": current_sql,
                     "result_metadata": metadata,
+                    "sample_data": sample_data,  # Pass actual data for analysis
                     "user": current_user
                 }
                 
@@ -274,7 +418,7 @@ async def run_natural_language_query(
                          val_rep = validate_and_normalize_sql(repaired_sql, dialect="mysql")
                          if val_rep["valid"]: repaired_sql = val_rep["sql"]
                          
-                         execution_result = execute_sql_query(conn, repaired_sql)
+                         execution_result = execute_query_for_connection(conn, repaired_sql)
                          
                          # Success! Generate insights/history/etc.
                          # (Duplicate success logic - implies refactor needed, but for now copying is safer than abstracting blindly)
@@ -286,11 +430,13 @@ async def run_natural_language_query(
                          
                          # SUCCESS COPY
                          from app.ai.nodes.insights import query_insights_generator
-                         row_count = len(execution_result.get("data", [])) if execution_result else 0
+                         rows = execution_result.get("rows", execution_result.get("data", []))
+                         row_count = len(rows) if rows else 0
                          cols = execution_result.get("columns", []) if execution_result else []
+                         sample_data = rows[:5] if rows else []
                          metadata = {"rows_returned": row_count, "columns": cols, "execution_time": "Unknown"}
                          
-                         insights_inputs = {"question": request.question, "sql_query": repaired_sql, "result_metadata": metadata, "user": current_user}
+                         insights_inputs = {"question": request.question, "sql_query": repaired_sql, "result_metadata": metadata, "sample_data": sample_data, "user": current_user}
                          insights_result = query_insights_generator(insights_inputs)
                          insights_data = insights_result.get("insights")
                          
@@ -374,7 +520,7 @@ def run_raw_sql_query(
         raise HTTPException(status_code=403, detail="Not authorized")
         
     try:
-        execution_result = execute_sql_query(conn, request.sql_query)
+        execution_result = execute_query_for_connection(conn, request.sql_query)
         return NLQueryResponse(
             intent="DIRECT_EXECUTION",
             sql_query=request.sql_query,

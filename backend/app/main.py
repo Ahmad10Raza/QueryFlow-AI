@@ -29,7 +29,7 @@ app.add_middleware(
 def root():
     return {"message": "Welcome to QueryFlow AI API"}
 
-from app.api import auth, users, db_connections, schema, query, schema_explorer, approvals, history
+from app.api import auth, users, db_connections, schema, query, schema_explorer, approvals, history, query_requests
 
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
 app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
@@ -39,6 +39,7 @@ app.include_router(schema_explorer.router, prefix=f"{settings.API_V1_STR}/schema
 app.include_router(query.router, prefix=f"{settings.API_V1_STR}/query", tags=["query"])
 app.include_router(approvals.router, prefix=f"{settings.API_V1_STR}/approvals", tags=["approvals"])
 app.include_router(history.router, prefix=f"{settings.API_V1_STR}/history", tags=["history"])
+app.include_router(query_requests.router, prefix=f"{settings.API_V1_STR}/query-requests", tags=["query_requests"])
 
 from app.api import admin_users
 app.include_router(admin_users.router, prefix=f"{settings.API_V1_STR}/admin/users", tags=["admin_users"])

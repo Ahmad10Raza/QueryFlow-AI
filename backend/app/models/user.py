@@ -16,4 +16,3 @@ class User(Base):
     llm_api_key_encrypted = Column(String(1000), nullable=True)
 
     role = relationship("Role")
-    query_history = relationship("QueryHistory", back_populates="user")

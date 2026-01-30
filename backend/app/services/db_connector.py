@@ -10,21 +10,39 @@ class DBConnector:
         """Constructs a database connection URI."""
         db_type = connection_details.get("db_type", "postgres")
         user = connection_details.get("username")
-        password = urllib.parse.quote_plus(decrypted_password)
         host = connection_details.get("host")
         port = connection_details.get("port")
         db_name = connection_details.get("database_name")
         
         if db_type == "postgres":
-            return f"postgresql://{user}:{password}@{host}:{port}/{db_name}"
+            if decrypted_password:
+                password = urllib.parse.quote_plus(decrypted_password)
+                return f"postgresql://{user}:{password}@{host}:{port}/{db_name}"
+            else:
+                return f"postgresql://{user}@{host}:{port}/{db_name}"
         elif db_type == "mysql":
-            return f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}"
+            if decrypted_password:
+                password = urllib.parse.quote_plus(decrypted_password)
+                return f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}"
+            else:
+                return f"mysql+pymysql://{user}@{host}:{port}/{db_name}"
+        elif db_type == "mongodb":
+            # MongoDB URIs are handled by mongo_client.py
+            # Return a placeholder - actual URI is built by MongoDBClient
+            raise ValueError("Use MongoDBClient for MongoDB connections")
         else:
             raise ValueError(f"Unsupported database type: {db_type}")
 
     @staticmethod
     def test_connection(connection_details: Dict[str, Any], password: str) -> Tuple[bool, str]:
         """Tries to connect to the database and runs a simple query."""
+        db_type = connection_details.get("db_type", "postgres")
+        
+        # Handle MongoDB separately
+        if db_type == "mongodb":
+            from app.services.mongo_client import mongo_client
+            return mongo_client.test_connection(connection_details, password)
+        
         try:
             uri = DBConnector.build_uri(connection_details, password)
             # Create a throwaway engine for testing

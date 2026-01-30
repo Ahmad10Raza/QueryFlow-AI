@@ -18,6 +18,7 @@ export function AddConnectionModal({ onConnectionAdded }: AddConnectionModalProp
     const [loading, setLoading] = useState(false);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+    const [error, setError] = useState<string | null>(null);
     const [formData, setFormData] = useState({
         name: '',
         db_type: 'postgres',
@@ -35,20 +36,28 @@ export function AddConnectionModal({ onConnectionAdded }: AddConnectionModalProp
             [name]: name === 'port' ? parseInt(value) || 5432 : value
         }));
         setTestResult(null);
+        setError(null);
     };
 
     const handleSelectChange = (value: string) => {
+        const portMap: Record<string, number> = {
+            'postgres': 5432,
+            'mysql': 3306,
+            'mongodb': 27017
+        };
         setFormData(prev => ({
             ...prev,
             db_type: value,
-            port: value === 'mysql' ? 3306 : 5432
+            port: portMap[value] || 5432
         }));
         setTestResult(null);
+        setError(null);
     };
 
     const handleTestConnection = async () => {
         setTesting(true);
         setTestResult(null);
+        setError(null);
         try {
             const response = await api.post('/db_connections/test', formData);
             setTestResult(response.data);
@@ -65,6 +74,7 @@ export function AddConnectionModal({ onConnectionAdded }: AddConnectionModalProp
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
+        setError(null);
         try {
             await api.post('/db_connections/', formData);
             setOpen(false);
@@ -79,9 +89,9 @@ export function AddConnectionModal({ onConnectionAdded }: AddConnectionModalProp
                 database_name: ''
             });
             setTestResult(null);
-        } catch (error: any) {
-            const errorMsg = error.response?.data?.detail || 'Failed to add connection';
-            alert(errorMsg);
+        } catch (err: any) {
+            const errorMsg = err.response?.data?.detail || 'Failed to add connection';
+            setError(errorMsg);
         } finally {
             setLoading(false);
         }
@@ -119,6 +129,7 @@ export function AddConnectionModal({ onConnectionAdded }: AddConnectionModalProp
                                 <SelectContent>
                                     <SelectItem value="postgres">PostgreSQL</SelectItem>
                                     <SelectItem value="mysql">MySQL</SelectItem>
+                                    <SelectItem value="mongodb">MongoDB</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
@@ -178,7 +189,6 @@ export function AddConnectionModal({ onConnectionAdded }: AddConnectionModalProp
                                 type="password"
                                 value={formData.password}
                                 onChange={handleChange}
-                                required
                             />
                         </div>
                     </div>
@@ -198,6 +208,17 @@ export function AddConnectionModal({ onConnectionAdded }: AddConnectionModalProp
                         </Alert>
                     )}
 
+                    {error && (
+                        <Alert variant="destructive">
+                            <div className="flex items-center gap-2">
+                                <XCircle className="h-5 w-5" />
+                                <AlertDescription className="flex-1">
+                                    {error}
+                                </AlertDescription>
+                            </div>
+                        </Alert>
+                    )}
+
                     <div className="flex gap-3 justify-end pt-2">
                         <Button
                             type="button"
@@ -208,7 +229,7 @@ export function AddConnectionModal({ onConnectionAdded }: AddConnectionModalProp
                             {testing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                             Test Connection
                         </Button>
-                        <Button type="submit" disabled={loading || testing || !testResult?.success}>
+                        <Button type="submit" disabled={loading || testing}>
                             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                             Save Connection
                         </Button>

@@ -8,8 +8,52 @@ from app.auth import dependencies
 from app.models.user import User
 from app.services.db_connector import db_connector
 from app.services.credential_encryptor import encryptor
+from app.services.mongo_client import mongo_client
 
 router = APIRouter()
+
+
+def get_mongodb_schema_structure(db_conn, decrypted_password) -> Dict[str, Any]:
+    """Fetch schema structure for a MongoDB database."""
+    connection_details = {
+        "username": db_conn.username,
+        "host": db_conn.host,
+        "port": db_conn.port,
+        "database_name": db_conn.database_name
+    }
+    
+    client = mongo_client.get_client(connection_details, decrypted_password)
+    
+    try:
+        db = client[db_conn.database_name]
+        collections = db.list_collection_names()
+        
+        # Build tables list (collections in MongoDB)
+        tables = []
+        for collection_name in collections:
+            # Get document count and sample to infer field count
+            collection = db[collection_name]
+            doc_count = collection.estimated_document_count()
+            sample = collection.find_one()
+            field_count = len(sample.keys()) if sample else 0
+            
+            tables.append({
+                "name": collection_name,
+                "column_count": field_count,
+                "row_count": doc_count
+            })
+        
+        return {
+            "database_name": db_conn.database_name,
+            "tables": tables,
+            "views": [],  # MongoDB doesn't have traditional views in the same way
+            "indexes": [],  # Could be extended to list indexes
+            "procedures": [],
+            "triggers": [],
+            "events": []
+        }
+    finally:
+        client.close()
 
 def get_mysql_schema_structure(engine) -> Dict[str, Any]:
     """Fetch schema structure for the connected database in MySQL."""
@@ -179,20 +223,30 @@ def get_schema_structure(
     if db_conn.owner_id != current_user.user_id and not current_user.is_superuser and current_user.role_name != "ADMIN":
         raise HTTPException(status_code=403, detail="Not authorized")
     
-    # Decrypt password and create engine
+    # Decrypt password
     decrypted_password = encryptor.decrypt(db_conn.password_encrypted)
-    engine = db_connector.create_engine_for_connection(db_conn, decrypted_password)
     
     try:
-        if db_conn.db_type == "mysql":
-            structure = get_mysql_schema_structure(engine)
-        elif db_conn.db_type == "postgres":
-            structure = get_postgres_schema_structure(engine)
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported database type: {db_conn.db_type}")
+        # Handle MongoDB separately (no SQLAlchemy engine)
+        if db_conn.db_type == "mongodb":
+            structure = get_mongodb_schema_structure(db_conn, decrypted_password)
+            return structure
         
-        return structure
+        # Create SQLAlchemy engine for SQL databases
+        engine = db_connector.create_engine_for_connection(db_conn, decrypted_password)
+        
+        try:
+            if db_conn.db_type == "mysql":
+                structure = get_mysql_schema_structure(engine)
+            elif db_conn.db_type == "postgres":
+                structure = get_postgres_schema_structure(engine)
+            else:
+                raise HTTPException(status_code=400, detail=f"Unsupported database type: {db_conn.db_type}")
+            
+            return structure
+        finally:
+            engine.dispose()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch schema structure: {str(e)}")
-    finally:
-        engine.dispose()

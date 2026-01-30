@@ -13,8 +13,9 @@ class QueryApproval(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     
-    requested_by_user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
-    reviewed_by_user_id = Column(Integer, ForeignKey("user.id"), nullable=True)
+    # NOTE: These no longer have FK constraints as users are in MongoDB
+    requested_by_user_id = Column(Integer, nullable=False)
+    reviewed_by_user_id = Column(Integer, nullable=True)
     
     db_connection_id = Column(Integer, ForeignKey("db_connection.id"), nullable=False)
     
