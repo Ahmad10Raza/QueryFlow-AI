@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import CodeEditor from '@/components/Editor';
@@ -53,15 +53,36 @@ export default function EditorPage() {
 
     // Approved Request Execution State
     const [approvedRequestId, setApprovedRequestId] = useState<number | null>(null);
+    const [approvedSql, setApprovedSql] = useState<string | null>(null);
+    const processedRequestIdRef = useRef<number | null>(null);
+    const editorRef = useRef<any>(null);
+
+    const handleEditorDidMount = (editor: any, monaco: any) => {
+        editorRef.current = editor;
+    };
 
     useEffect(() => {
         if (dbId) setActiveDbId(parseInt(dbId));
     }, [dbId, setActiveDbId]);
 
+    // Clear approved status if user edits the query
+    useEffect(() => {
+        if (approvedRequestId && approvedSql && currentSql !== approvedSql) {
+            console.log("Query modified, switching to normal execution mode");
+            setApprovedRequestId(null);
+            setApprovedSql(null);
+        }
+    }, [currentSql, approvedRequestId, approvedSql]);
+
     useEffect(() => {
         const requestId = searchParams.get('requestId');
         if (requestId) {
             const id = parseInt(requestId);
+
+            // Prevent duplicate processing
+            if (processedRequestIdRef.current === id) return;
+            processedRequestIdRef.current = id;
+
             setApprovedRequestId(id);
             // Fetch request details
             api.get('/query-requests/')
@@ -69,8 +90,9 @@ export default function EditorPage() {
                     const req = res.data.find((r: any) => r.id === id);
                     if (req) {
                         setCurrentSql(req.generated_sql);
+                        setApprovedSql(req.generated_sql);
                         if (req.connection_id) setActiveDbId(req.connection_id);
-                        addMessage('assistant', `✅ **Loaded Approved Request #${id}**\n\nReady to execute. Click the "Run" button to proceed.`);
+                        addMessage('assistant', `✅ **Loaded Approved Request #${id}**\n\nReady to execute. Click the "Run" button to proceed.\n\n*Note: Editing this query will switch to normal execution mode.*`);
                     }
                 })
                 .catch(err => console.error("Failed to load request:", err));
@@ -156,7 +178,17 @@ export default function EditorPage() {
 
     const handleRunSql = async () => {
         if (!activeDbId) return alert("No database selected");
-        if (!currentSql) return alert("No SQL query to run");
+
+        let sqlToRun = currentSql;
+        if (editorRef.current) {
+            const selection = editorRef.current.getSelection();
+            const selectedText = editorRef.current.getModel().getValueInRange(selection);
+            if (selectedText && selectedText.trim().length > 0) {
+                sqlToRun = selectedText;
+            }
+        }
+
+        if (!sqlToRun) return alert("No SQL query to run");
 
         setExecuting(true);
         // Clear previous results
@@ -165,18 +197,17 @@ export default function EditorPage() {
         try {
             let res;
 
-            if (approvedRequestId) {
-                // Execute Approved Request
+            if (approvedRequestId && sqlToRun === approvedSql) {
+                // Execute Approved Request ONLY if text matches exactly
                 res = await api.post(`/query-requests/${approvedRequestId}/execute`);
-
-                // If successful, maybe clear approvedRequestId so subsequent runs are normal (or not?)
-                // Actually, once executed, status becomes EXECUTED, so repeating might fail if backend restricts.
-                // For now, let's keep it.
             } else {
+                if (approvedRequestId) {
+                    addMessage('assistant', 'Running modified/selected text as normal query.');
+                }
                 // Normal Execution
                 res = await api.post('/query/run', {
                     connection_id: activeDbId,
-                    sql_query: currentSql
+                    sql_query: sqlToRun
                 });
             }
 
@@ -413,6 +444,7 @@ export default function EditorPage() {
                                                     value={currentSql}
                                                     onChange={(val) => setCurrentSql(val || '')}
                                                     language="sql"
+                                                    onMount={handleEditorDidMount}
                                                 />
                                             </div>
                                         </ResizablePanel>

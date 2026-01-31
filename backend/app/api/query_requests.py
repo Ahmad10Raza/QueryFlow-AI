@@ -298,7 +298,11 @@ def execute_approved_request(
             mongo_query = sql_to_mongo_query(req.generated_sql)
             result = execute_mongo_query(conn, mongo_query)
         else:
-            result = execute_sql_query(conn, req.generated_sql)
+            # Determine if commit is needed based on intent
+            # Intents: READ, UPDATE, DELETE, CREATE
+            require_commit = req.intent in ["UPDATE", "DELETE", "CREATE", "INSERT"]
+            
+            result = execute_sql_query(conn, req.generated_sql, require_commit=require_commit)
         
         # Update request status
         req.status = "EXECUTED"

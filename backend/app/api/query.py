@@ -26,10 +26,12 @@ def execute_query_for_connection(conn: DBConnection, sql_or_query: str) -> Dict[
         return execute_sql_query(conn, sql_or_query)
 
 
+from bson import ObjectId
+
 def sql_to_mongo_query(sql: str) -> Dict[str, Any]:
     """
     Converts simple SQL-like queries to MongoDB query format.
-    Supports basic SELECT, WHERE clauses.
+    Supports basic SELECT, DELETE, WHERE clauses.
     """
     sql = sql.strip().rstrip(';')
     
@@ -54,6 +56,24 @@ def sql_to_mongo_query(sql: str) -> Dict[str, Any]:
             "filter": mongo_filter,
             "limit": limit
         }
+
+    # Pattern: DELETE FROM collection_name [WHERE conditions]
+    delete_pattern = r"DELETE\s+FROM\s+[`'\"]?(\w+)[`'\"]?(?:\s+WHERE\s+(.+?))?$"
+    match_delete = re.match(delete_pattern, sql, re.IGNORECASE)
+    
+    if match_delete:
+        collection = match_delete.group(1)
+        where_clause = match_delete.group(2)
+        
+        mongo_filter = {}
+        if where_clause:
+            mongo_filter = parse_where_to_mongo(where_clause)
+            
+        return {
+            "collection": collection,
+            "operation": "delete",
+            "filter": mongo_filter
+        }
     
     # Fallback: treat as collection name with find all
     return {
@@ -68,6 +88,7 @@ def parse_where_to_mongo(where_clause: str) -> Dict[str, Any]:
     """
     Parses simple WHERE clauses to MongoDB filter format.
     Supports: field = value, field > value, field < value, AND
+    Handles _id ObjectId conversion.
     """
     mongo_filter = {}
     
@@ -81,6 +102,12 @@ def parse_where_to_mongo(where_clause: str) -> Dict[str, Any]:
         eq_match = re.match(r"[`'\"]?(\w+)[`'\"]?\s*=\s*['\"]?([^'\"]+)['\"]?", condition)
         if eq_match:
             field, value = eq_match.groups()
+            
+            # Special handling for _id
+            if field == "_id" and ObjectId.is_valid(value):
+                mongo_filter[field] = ObjectId(value)
+                continue
+
             # Try to convert to number if possible
             try:
                 value = int(value)

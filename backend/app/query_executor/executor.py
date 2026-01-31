@@ -24,7 +24,9 @@ def execute_sql_query(db_connection: DBConnection, sql: str, require_commit: boo
                     return {
                         "status": "success",
                         "rows_affected": result.rowcount,
-                        "message": "Query executed successfully."
+                        "message": "Query executed successfully.",
+                        "columns": [],
+                        "rows": []
                     }
                 except Exception as e:
                     trans.rollback()
@@ -136,6 +138,17 @@ def execute_mongo_query(db_connection: DBConnection, query: Dict[str, Any]) -> D
             return {
                 "columns": columns,
                 "rows": rows
+            }
+
+        elif operation == "delete":
+            filter_dict = query.get("filter", {})
+            result = collection.delete_many(filter_dict)
+            return {
+                "status": "success",
+                "rows_affected": result.deleted_count,
+                "message": f"Deleted {result.deleted_count} documents.",
+                "columns": [],
+                "rows": []
             }
         
         else:
